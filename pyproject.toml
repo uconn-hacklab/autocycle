@@ -1,0 +1,43 @@
+[project]
+name = "autocycle"
+description = "Autonomous Riderless Bike Project"
+readme = "README.md"
+authors = [
+    {name = "Vihaan Shah", email = "vihaan.shah@uconn.edu"},
+]
+maintainers = [
+    {name = "Vihaan Shah", email = "vihaan.shah@uconn.edu"},
+]
+license = {text = "MIT License"}
+dynamic = ['version']
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Education",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "numpy >=1.19.0",
+    "mujoco >= 3.2.2",
+    "drake >= 1.32.0",
+]
+keywords = ["bike", "autonomous", "robotics", "underactuated"]
+
+[project.optional-dependencies]
+dev = [
+    "sphinx",
+]
+
+[project.urls]
+Source = "https://github.com/uconn-hacklab/autocycle"
+Tracker = "https://github.com/uconn-hacklab/autocycle/issues"
+Documentation = "https://github.com/uconn-hacklab/autocycle"
