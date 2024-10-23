@@ -1,0 +1,41 @@
+{
+  "name": "crm_core_dev",
+  "privileged": true,
+  "remoteUser": "${localEnv:USER}",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "args": {
+      "USERNAME": "${localEnv:USER}"
+    }
+  },
+  "workspaceFolder": "/crm_ws/src/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder}/../..,target=/crm_ws,type=bind",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-themes",
+        "twxs.cmake",
+        "donjayamanne.python-extension-pack",
+        "eamodio.gitlens",
+        "ms-iot.vscode-ros"
+      ]
+    }
+  },
+  "containerEnv": {
+    "DISPLAY": "unix:0",
+    "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"
+  },
+  "runArgs": [
+    "--net=host",
+    "--pid=host",
+    "--ipc=host",
+    "-e", "DISPLAY=${env:DISPLAY}"
+  ],
+  "mounts": [
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+    "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "sudo rosdep update && sudo rosdep install --from-paths /crm_ws/src --ignore-src -y && sudo chown -R $(whoami) /crm_ws"
+}
