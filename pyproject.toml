@@ -28,7 +28,6 @@ classifiers = [
 dependencies = [
     "numpy >=1.19.0",
     "mujoco >= 3.2.2",
-    "drake >= 1.32.0",
 ]
 keywords = ["bike", "autonomous", "robotics", "underactuated"]
 
@@ -36,6 +35,12 @@ keywords = ["bike", "autonomous", "robotics", "underactuated"]
 dev = [
     "sphinx",
 ]
+
+[project.optional-dependencies]
+tracker = [
+    "ultralytics",
+]
+
 
 [project.urls]
 Source = "https://github.com/uconn-hacklab/autocycle"
