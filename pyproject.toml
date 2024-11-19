@@ -1,47 +1,20 @@
 [project]
 name = "autocycle"
+version = "0.1.0"
 description = "Autonomous Riderless Bike Project"
+license = {text = "MIT License"}
 readme = "README.md"
 authors = [
     {name = "Vihaan Shah", email = "vihaan.shah@uconn.edu"},
+    {name = "Kalin Kochnev", email = "kalin.kochnev@uconn.edu"},
 ]
 maintainers = [
     {name = "Vihaan Shah", email = "vihaan.shah@uconn.edu"},
+    {name = "Kalin Kochnev", email = "kalin.kochnev@uconn.edu"},
 ]
-license = {text = "MIT License"}
-dynamic = ['version']
 requires-python = ">=3.10"
-classifiers = [
-    "Development Status :: 1 - Planning",
-    "Intended Audience :: Education",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Natural Language :: English",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-]
-dependencies = [
-    "numpy >=1.19.0",
-    "mujoco >= 3.2.2",
-]
+dependencies = []
 keywords = ["bike", "autonomous", "robotics", "underactuated"]
-
-[project.optional-dependencies]
-dev = [
-    "sphinx",
-    "sphinx-autobuild",
-    "sphinx-mathjax-offline",
-    "sphinx-favicon",
-    "sphinx-rtd-theme",
-    "furo",
-]
-
-[project.optional-dependencies]
-tracker = [
-    "ultralytics",
-]
 
 
 [project.urls]
