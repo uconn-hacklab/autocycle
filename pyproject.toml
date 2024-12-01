@@ -13,9 +13,23 @@ maintainers = [
     {name = "Kalin Kochnev", email = "kalin.kochnev@uconn.edu"},
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "numpy",
+  "opencv-contrib-python>4.6",
+  "pillow",
+  "requests>=2.31,<3",
+  "rerun-sdk>=0.20.0",
+  "timm==0.9.11",
+  "torch==2.2.2",              # This must match the version captured in pixi.toml
+  "transformers",
+]
 keywords = ["bike", "autonomous", "robotics", "underactuated"]
 
+[tool.setuptools.packages]
+find = {include = ["autocycle*"]}
+
+[project.scripts]
+autocycle = "autocycle:main"
 
 [project.urls]
 Source = "https://github.com/uconn-hacklab/autocycle"
