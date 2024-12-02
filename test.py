@@ -11,7 +11,9 @@ from ultralytics import YOLO
 import torch
 from transformers import DPTForDepthEstimation, DPTImageProcessor
 from collections import deque
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
+from dataclasses import dataclass
+from enum import Enum
 
 # TODO: FIX THIS
 def create_arm_mask(width: int, height: int) -> np.ndarray:
@@ -253,6 +255,229 @@ class MotionPlanner:
         # If neither side is clear, stop!
         return 'stop', 0.0
 
+
+class BikeState(Enum):
+    FORWARD = "forward"
+    TURNING_LEFT = "turning_left"
+    TURNING_RIGHT = "turning_right"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+    EMERGENCY_STOP = "emergency_stop"
+
+@dataclass
+class ObstacleData:
+    position: np.ndarray  # [x, y]
+    velocity: np.ndarray  # [vx, vy]
+    size: np.ndarray      # [width, height]
+    distance: float
+    ttc: float
+    predicted_positions: List[np.ndarray]
+
+class EnhancedMotionPlanner:
+    def __init__(self, image_width: int, image_height: int):
+        self.image_width = image_width
+        self.image_height = image_height
+        
+        # Safety thresholds
+        self.min_safe_distance = 2.0   # meters
+        self.danger_distance = 3.0     # meters
+        self.critical_distance = 1.0   # meters
+        
+        # Bike parameters
+        self.bike_speed = 1.0          # meters/second
+        self.max_turn_angle = 35.0     # degrees
+        self.min_turn_angle = 0      # degrees
+        
+        # State machine
+        self.current_state = BikeState.FORWARD
+        self.target_turn_angle = 0.0
+        self.current_turn_angle = 0.0
+        self.turn_rate = 5.0           # degrees per frame
+        
+        # Prediction parameters
+        self.prediction_horizon = 10    # frames
+        self.prediction_dt = 0.1       # seconds
+
+    def get_object_distance(self, detection: np.ndarray, depth_map: np.ndarray) -> float:
+        """Get the distance to an object using the depth map with debugging."""
+        x, y, w, h = detection[:4]
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        
+        # Debug original values
+        logging.debug(f"Original bbox: x={x}, y={y}, w={w}, h={h}")
+        logging.debug(f"Depth map shape: {depth_map.shape}")
+        
+        # Ensure coordinates are within bounds
+        x = max(0, min(x, depth_map.shape[1] - 1))
+        y = max(0, min(y, depth_map.shape[0] - 1))
+        w = min(w, depth_map.shape[1] - x)
+        h = min(h, depth_map.shape[0] - y)
+        
+        # Debug adjusted values
+        logging.debug(f"Adjusted bbox: x={x}, y={y}, w={w}, h={h}")
+        
+        # Get the region of interest in the depth map
+        roi = depth_map[y:y+h, x:x+w]
+        
+        if roi.size == 0:
+            return float('inf')
+        
+        # Debug ROI stats
+        min_depth = np.min(roi)
+        max_depth = np.max(roi)
+        median_depth = np.median(roi)
+        mean_depth = np.mean(roi)
+        
+        return median_depth
+        
+    def estimate_ttc(self, obstacle_pos: np.ndarray, obstacle_vel: np.ndarray, 
+                     distance: float) -> float:
+        """Estimate time-to-collision with an obstacle."""
+        # Convert pixel velocities to approximate real-world velocities using distance
+        scale_factor = distance / 10.0  # rough approximation
+        relative_vel = obstacle_vel * scale_factor - np.array([0, self.bike_speed])
+        
+        # If moving away or parallel, return infinite TTC
+        if np.dot(relative_vel, obstacle_pos) >= 0:
+            return float('inf')
+            
+        # Calculate TTC
+        relative_speed = np.linalg.norm(relative_vel)
+        if relative_speed < 0.1:  # Practically stationary
+            return float('inf')
+            
+        ttc = distance / relative_speed
+        return ttc
+    
+    def predict_obstacle_path(self, position: np.ndarray, velocity: np.ndarray) -> List[np.ndarray]:
+        """Predict future positions of an obstacle."""
+        predictions = []
+        current_pos = position.copy()
+        
+        for _ in range(self.prediction_horizon):
+            current_pos = current_pos + velocity * self.prediction_dt
+            predictions.append(current_pos.copy())
+            
+        return predictions
+    
+    def calculate_turn_angle(self, obstacles: List[ObstacleData]) -> float:
+        """Calculate smooth turn angle based on obstacles."""
+        if not obstacles:
+            # Gradually return to forward if no obstacles
+            if abs(self.current_turn_angle) < self.min_turn_angle:
+                return 0.0
+            return self.current_turn_angle * 0.9  # Gradually straighten
+            
+        # Find the most urgent obstacle
+        min_ttc = float('inf')
+        urgent_obstacle = None
+        
+        for obs in obstacles:
+            if obs.ttc < min_ttc and obs.distance < self.danger_distance:
+                min_ttc = obs.ttc
+                urgent_obstacle = obs
+                
+        if urgent_obstacle is None:
+            return 0.0
+            
+        # Calculate desired turn angle
+        obstacle_center = urgent_obstacle.position[0]
+        image_center = self.image_width / 2
+        
+        # Basic angle calculation
+        base_angle = 30.0 * (image_center - obstacle_center) / (self.image_width / 2)
+        
+        # Adjust angle based on TTC
+        ttc_factor = max(0.0, min(1.0, (urgent_obstacle.ttc - 1.0) / 2.0))
+        target_angle = base_angle * (1.0 - ttc_factor)
+        
+        # Smooth the turn
+        angle_diff = target_angle - self.current_turn_angle
+        if abs(angle_diff) > self.turn_rate:
+            if angle_diff > 0:
+                return self.current_turn_angle + self.turn_rate
+            else:
+                return self.current_turn_angle - self.turn_rate
+                
+        return target_angle
+    
+    def update_state(self, obstacles: List[ObstacleData]) -> Tuple[BikeState, float]:
+        """Update state machine and return new state and turn angle."""
+        if not obstacles:
+            # No obstacles - transition to or maintain FORWARD
+            if self.current_state != BikeState.FORWARD:
+                self.current_state = BikeState.FORWARD
+            self.target_turn_angle = 0.0
+            
+        else:
+            # Check for emergency stops
+            for obs in obstacles:
+                if obs.distance < self.critical_distance or obs.ttc < 0.5:
+                    self.current_state = BikeState.EMERGENCY_STOP
+                    return BikeState.EMERGENCY_STOP, 0.0
+            
+            # Calculate new turn angle
+            self.target_turn_angle = self.calculate_turn_angle(obstacles)
+            
+            # Update state based on turn angle
+            if abs(self.target_turn_angle) < self.min_turn_angle:
+                self.current_state = BikeState.FORWARD
+            elif self.target_turn_angle > 0:
+                self.current_state = BikeState.TURNING_LEFT
+            else:
+                self.current_state = BikeState.TURNING_RIGHT
+                
+        # Smooth turn angle transition
+        angle_diff = self.target_turn_angle - self.current_turn_angle
+        if abs(angle_diff) > self.turn_rate:
+            if angle_diff > 0:
+                self.current_turn_angle += self.turn_rate
+            else:
+                self.current_turn_angle -= self.turn_rate
+        else:
+            self.current_turn_angle = self.target_turn_angle
+            
+        return self.current_state, self.current_turn_angle
+    
+    def plan_motion(self, detections: np.ndarray, velocities: Dict[int, np.ndarray], 
+                    depth_map: np.ndarray) -> Tuple[str, float]:
+        """Main motion planning function."""
+        obstacles = []
+        
+        # Process each detection into an obstacle
+        for i, det in enumerate(detections):
+            position = np.array([det[0] + det[2]/2, det[1] + det[3]/2])
+            velocity = velocities.get(i, np.zeros(2))
+            size = np.array([det[2], det[3]])
+            distance = self.get_object_distance(det, depth_map)
+            
+            ttc = self.estimate_ttc(position, velocity, distance)
+            predicted_positions = self.predict_obstacle_path(position, velocity)
+            
+            obstacles.append(ObstacleData(
+                position=position,
+                velocity=velocity,
+                size=size,
+                distance=distance,
+                ttc=ttc,
+                predicted_positions=predicted_positions
+            ))
+            
+        # Update state machine
+        state, turn_angle = self.update_state(obstacles)
+        
+        # Log prediction paths if using Rerun
+        for obs in obstacles:
+            if len(obs.predicted_positions) > 1:
+                points = np.array(obs.predicted_positions)
+                rr.log(
+                    "predictions",
+                    rr.Points2D(points),
+                    rr.LineStrips2D(points),
+                )
+        
+        return state.value, turn_angle
+    
 class DepthEstimator:
     """
     Uses a pre-trained MiDaS DPT model to estimate depth from RGB images
@@ -268,7 +493,7 @@ class DepthEstimator:
         
         # Real-world scaling factor for converting depth values to meters
         # This value should be calibrated for the specific camera setup
-        self.scale_factor = 0.1  # Meters per depth unit
+        self.scale_factor = 0.0005  # Meters per depth unit
         
     def estimate_depth(self, rgb_image: np.ndarray) -> np.ndarray:
         inputs = self.processor(images=rgb_image, return_tensors="pt")
@@ -279,20 +504,18 @@ class DepthEstimator:
             predicted_depth = outputs.predicted_depth
         
         depth_map = predicted_depth.squeeze().cpu().numpy()
-        depth_map = depth_map * self.scale_factor
         
+        depth_map = depth_map * self.scale_factor
+    
         return depth_map
     
 def process_video(video_source: str, *, max_frame_count: int | None = None) -> None:
-    """
-    - Sets up and integrates various components (detection, tracking, depth estimation, and planning)
-    - logging visualization and debugging via Rerun and terminal
-    """
+    """Process video frames for autonomous navigation."""
     model = YOLO('yolov8n.pt')
     tracker = ObjectTracker()
     depth_estimator = DepthEstimator()
     
-    # video capture (both camera streams and video files - mp4 so far)
+    # Initialize video capture
     if video_source.isdigit():
         cap = cv2.VideoCapture(int(video_source))
         logging.info("Using camera device %s", video_source)
@@ -303,11 +526,10 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open video source: {video_source}")
     
+    # Initialize motion planner with enhanced version
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    planner = MotionPlanner(frame_width, frame_height)
-    
-    arm_mask = create_arm_mask(frame_width, frame_height)
+    planner = EnhancedMotionPlanner(frame_width, frame_height)
     
     frame_idx = 0
     while cap.isOpened():
@@ -319,24 +541,26 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
             logging.info("End of video")
             break
 
-        # Logging
         rr.set_time_sequence("frame", frame_idx)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        
+        # Log raw video
         rr.log("raw_video", rr.Image(rgb).compress(jpeg_quality=85))
         
+        # Estimate depth
         depth_map = depth_estimator.estimate_depth(rgb)
         normalized_depth = ((depth_map - depth_map.min()) / 
-                            (depth_map.max() - depth_map.min()) * 255).astype(np.uint8)
+                          (depth_map.max() - depth_map.min()) * 255).astype(np.uint8)
         depth_colored = cv2.applyColorMap(normalized_depth, cv2.COLORMAP_TURBO)
-        rr.log("depth_map", rr.Image(depth_colored))
+        rr.log("depth_map/image", rr.Image(depth_colored))
         
-        # Run object detection and filter results based on relevance
+        # Run YOLO detection
         results = model(rgb)
         all_detections = []
         for result in results:
             boxes = result.boxes
             if len(boxes) > 0:
-                relevant_classes = [0, 1, 2, 3, 5, 7]  # Only relevant object classes
+                relevant_classes = [0, 1, 2, 3, 5, 7]
                 mask = np.isin(boxes.cls.cpu().numpy(), relevant_classes)
                 
                 if np.any(mask):
@@ -345,10 +569,7 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
                     for box in xyxy:
                         center_x = (box[0] + box[2]) / 2
                         center_y = (box[1] + box[3]) / 2
-                        
-                        # Exclude detections in the arm regions
-                        if center_y < frame_height or arm_mask[int(center_y), int(center_x)]:
-                            valid_detections.append(box)
+                        valid_detections.append(box)
                     
                     if valid_detections:
                         valid_detections = np.array(valid_detections)
@@ -365,14 +586,20 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
         if all_detections:
             all_detections = np.array(all_detections)
             velocities = tracker.update(all_detections, frame_idx)
-            action, turn_angle = planner.plan_motion(all_detections, velocities, depth_map)
             
-            # Log planning decision
-            rr.log("planning", rr.TextLog(f"Action: {action}, Turn Angle: {turn_angle:.1f}°"))
+            # Plan motion using enhanced planner
+            state, turn_angle = planner.plan_motion(all_detections, velocities, depth_map)
             
-            # Log bounding boxes (this was missing)
+            # Log planning visualization
+            rr.log("planning", rr.TextLog(f"State: {state}, Turn Angle: {turn_angle:.1f}°"))
+            
+            # Log detections with both image and boxes
             rr.log(
-                "detections",
+                "detections/image",
+                rr.Image(rgb).compress(jpeg_quality=85)
+            )
+            rr.log(
+                "detections/boxes",
                 rr.Boxes2D(
                     array=all_detections[:, :4],
                     array_format=rr.Box2DFormat.XYWH,
@@ -380,7 +607,39 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
                 )
             )
             
-            # Also log velocity vectors if you want them
+            # Log boxes on depth map
+            rr.log(
+                "depth_map/boxes",
+                rr.Boxes2D(
+                    array=all_detections[:, :4],
+                    array_format=rr.Box2DFormat.XYWH,
+                    class_ids=all_detections[:, -1].astype(np.uint16),
+                )
+            )
+            
+            # Log distances and TTC for each detection
+            info_text = ""
+            for i, det in enumerate(all_detections):
+                x, y, w, h = det[:4]
+                class_id = int(det[-1])
+                distance = planner.get_object_distance(det, depth_map)
+                ttc = planner.estimate_ttc(
+                    np.array([x + w/2, y + h/2]),
+                    velocities.get(i, np.zeros(2)),
+                    distance
+                )
+                
+                # Convert class_id to name for better readability
+                class_names = {
+                    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle",
+                    5: "bus", 7: "truck"
+                }
+                class_name = class_names.get(class_id, f"unknown_{class_id}")
+                
+                info_text += f"Box #{i} ({class_name}): dist={distance:.2f}m, TTC={ttc:.2f}s\n"
+            rr.log("distances", rr.TextLog(info_text))
+            
+            # Visualize velocity vectors
             for track_id, vel in velocities.items():
                 if track_id in tracker.current_positions and np.linalg.norm(vel) > 0:
                     pos = tracker.current_positions[track_id]
@@ -393,9 +652,14 @@ def process_video(video_source: str, *, max_frame_count: int | None = None) -> N
                             colors=np.array([[255, 0, 0]]),
                         )
                     )
+        else:
+            # If no detections, still show the image but clear boxes
+            rr.log("detections/image", rr.Image(rgb).compress(jpeg_quality=85))
+            rr.log("planning", rr.TextLog("State: FORWARD, Turn Angle: 0.0°"))
+            rr.log("distances", rr.TextLog("No objects detected"))
         
         frame_idx += 1
-
+    
     cap.release()
 
 def main() -> None:
