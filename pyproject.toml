@@ -12,16 +12,9 @@ maintainers = [
     {name = "Vihaan Shah", email = "vihaan.shah@uconn.edu"},
     {name = "Kalin Kochnev", email = "kalin.kochnev@uconn.edu"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
   "numpy",
-  "opencv-contrib-python>4.6",
-  "pillow",
-  "requests>=2.31,<3",
-  "rerun-sdk>=0.20.0",
-  "timm==0.9.11",
-  "torch==2.2.2",              # This must match the version captured in pixi.toml
-  "transformers",
 ]
 keywords = ["bike", "autonomous", "robotics", "underactuated"]
 
@@ -35,3 +28,17 @@ autocycle = "autocycle:main"
 Source = "https://github.com/uconn-hacklab/autocycle"
 Tracker = "https://github.com/uconn-hacklab/autocycle/issues"
 Documentation = "https://github.com/uconn-hacklab/autocycle"
+
+[project.optional-dependencies]
+dev = [
+  "sphinx",
+  "sphinx-autobuild",
+  "sphinx-favicon",
+  "sphinx-mathjax-offline",
+  "furo",
+  "myst-parser",
+  "sphinx-copybutton",
+  "sphinx-design",
+  "sphinx-inline-tabs",
+  "sphinx-tabs",
+]
