@@ -76,7 +76,7 @@ myst_heading_anchors = 3
 #
 
 html_theme = "furo"
-html_title = "autocycle"
+html_title = "Autocycle"
 language = "en"
 
 html_static_path = ["_static"]
