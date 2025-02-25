@@ -120,4 +120,5 @@ exclude_patterns = [
     '**/.git/**',
     '**/__pycache__/**',
     '**/node_modules/**',
+    'README.md', '**/README.md' ## Exclude README.md files
 ]
