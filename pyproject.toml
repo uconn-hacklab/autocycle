@@ -13,21 +13,20 @@ maintainers = [
     {name = "Kalin Kochnev", email = "kalin.kochnev@uconn.edu"},
 ]
 requires-python = ">=3.12"
-dependencies = [
-  "numpy",
-]
-keywords = ["bike", "autonomous", "robotics", "underactuated"]
-
-[tool.setuptools.packages]
-find = {include = ["autocycle*"]}
-
-[project.scripts]
-autocycle = "autocycle:main"
+dependencies = []
+keywords = ["bike", "autonomy", "robotics"]
 
 [project.urls]
 Source = "https://github.com/uconn-hacklab/autocycle"
 Tracker = "https://github.com/uconn-hacklab/autocycle/issues"
 Documentation = "https://github.com/uconn-hacklab/autocycle"
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
 
 [project.optional-dependencies]
 dev = [
